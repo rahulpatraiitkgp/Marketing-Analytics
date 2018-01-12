@@ -1,0 +1,293 @@
+---
+title: "Statistical Analysis Handout for the Market Segmentation Lecture"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+  html_notebook:
+    toc: yes
+---
+
+This handout is designed to help you replicate the statistical analyses that were covered in the Market Segmentation lecture. You should have this handout handy when you work on the (Market Segmentation) programming assignment where you will be asked to apply the learnings from the lecture on a different dataset.
+
+# Cluster Analysis
+
+Cluster Analysis refers to a class of techniques used to classify individuals into groups such that:
+
+  * Individuals within a group should be as similar as possible
+  * Individuals belonging to different groups should be as dissimilar as possible
+  
+This handout shows three different cluster analysis techniques:
+  
+  1. Hierarchical clustering
+  2. K-Means
+  3. Latent Class Analysis
+  
+In order to run these statistical methods, you need to install these R packages:
+
+  * NbClust
+  * mclust
+  * gmodels
+  
+```{r,echo=TRUE, comment=FALSE,warning=FALSE,message=FALSE}
+set.seed(1990)
+library(NbClust)
+library(mclust)
+library(gmodels)
+```
+
+# Reading and outputing data
+
+The dataset includes data from 73 students (24 MBAs and 49 undergrads). These students were asked to allocate 100 points across six automobile attributes (Trendy, Styling, Reliability, Sportiness, Performance, and Comfort) in a way that reflects their importance in the purchase decision of which car to buy. We use this dataset to answer the following questions:
+
+  1. Are there different benefit segments among this student population?
+  2. How many segments?
+  3. How are they different in their constant-sum allocation?
+  4. How can we transform this information into actionable levers from a managerial standpoint? 
+
+Let us start by reading the data. Remember to start by setting the appropriate directory using the following code
+
+```{r,eval=FALSE}
+setwd("your_directory")
+```
+
+We can now read the raw data: 
+
+```{r,eval=TRUE,echo=TRUE}
+seg_data <- read.csv(file = "SegmentationData.csv",row.names=1)
+head(seg_data)
+```
+
+# Hierarchical Clustering Analysis
+
+Hierarchical Clustering Analysis is one of the most popular technique used for market segmentation. It is a numerical procedure which attempts to separate a set of observations into clusters from the bottom-up by joining single individuals sequentially until we obtain one large cluster. Hence, this technique doesn't require the pre-specification of the number of clusters,which can be assessed through the "dendogram" (a tree-like representation of the data).
+
+More specifically, the algorithm works as follow:
+  
+  1. Each respondent is initially assigned to his or her own cluster
+  2. Identify the distance between each cluster (intially between pairs of respondents)
+  3. The two closest clusters are combined into one
+  4. Repeat steps 2 and 3 until there is one unique cluster containing all the observations
+  5. Represent the clusters in a dendogram
+  
+A key aspect of hierarchical clustering consists in choosing how to compute the distance between two clusters. Is it equal to the maximal distance between two points from each of these clusters? Or the minimal distance? What about the distance between two points? In this handout, we will use Ward's criterion which aims to minimize the total variance within-cluster. To do so, we use the R function hclust. We start by standardizing the data so that every variable is on the same scale. We then compute the euclidean distance between observations.  
+
+```{r}
+std_seg_data <- scale(seg_data[,c("Trendy", "Styling", "Reliability", "Sportiness", "Performance", "Comfort")]) 
+dist <- dist(std_seg_data, method = "euclidean")
+as.matrix(dist)[1:5,1:5]
+```
+
+We now use the function hclust() to apply hierarchical clustering on our data. We use the Ward criterion which aims to minimize the within-cluster variance. \\
+We obtain the dendogram below which can help us decide the number of clusters to retain. This number seems to be either 3 or 4. \\
+Note: It is important to set the seed to a specific value.  This way you would always get the same labeling of the clusters. Otherwise, cluster 1 in one analysis may correspond to cluster 3 in another.
+
+
+```{r}
+set.seed(1990)
+clust <- hclust(dist, method = "ward.D2")
+plot(clust)
+```
+
+## The four-cluster solution
+
+We start by 4 clusters as we see below:
+
+
+```{r}
+set.seed(1990)
+clust <- hclust(dist, method = "ward.D2")
+plot(clust)
+h_cluster <- cutree(clust, 4)
+rect.hclust(clust, k=4, border="red")
+```
+
+Let us now look at some description of this clustering. The table below informs us with the number of individuals in each cluster:
+
+```{r}
+table(h_cluster)
+```
+The table below reports the profiles of the four clusters (i.e., the clustering variables means by cluster).  Looking at this table, we can describe the clusters as follows:
+
+  1. Cluster 1 values reliability and Performance
+  2. Cluster 2 values Sportiness and Comfort
+  3. Cluster 3 values Trendiness and Style
+  4. Cluster 4 values Style and Sportiness
+
+Hence, it seems that Cluster 4 is a combination of Clusters 2 and 3. This suggests that 3 clusters may be better at capturing the heterogeneity of the subjects in this dataset. 
+
+```{r}
+hclust_summary <- aggregate(std_seg_data[,c("Trendy", "Styling", "Reliability", "Sportiness", "Performance", "Comfort")],by=list(h_cluster),FUN=mean)
+hclust_summary
+```
+## Three-Cluster Solution
+
+```{r}
+plot(clust)
+h_cluster <- cutree(clust, 3)
+rect.hclust(clust, k=3, border="red")
+```
+
+
+```{r}
+table(h_cluster)
+```
+
+```{r}
+hclust_summary <- aggregate(std_seg_data[,c("Trendy", "Styling", "Reliability", "Sportiness", "Performance", "Comfort")],by=list(h_cluster),FUN=mean)
+hclust_summary
+```
+This solution seems to have clusters of similar sizes. In addition, we can easily caracterize each of them. The first cluster cares about Performance and Reliability while Cluster 2 values Comfort and Sportiness. Finally, the third cluster cares about the appearance. Below, we rename those clusters according to their characteristics. 
+
+```{r}
+h_cluster <- factor(h_cluster,levels = c(1,2,3),
+                    labels = c("Perf.", "Comfort", "Appearance"))
+```
+
+
+We can also focus on a given cluster by using the following code. Here the first one on the left:
+
+```{r}
+plot(cut(as.dendrogram(clust), h=9)$lower[[3]])
+```
+
+## Number of Clusters
+
+As seen above, one can use the dendogram to decide on the appropriate number of clusters. The function NbClust examines all the indexes/criteria used to determine the optimal number of clusters and outputs the optimal number based on the majority rule. Note that since it's a constant-sum allocation, we must use only 5 variables to avoid collinearity issues. 
+
+```{r,echo=TRUE}
+set.seed(1990)
+NbClust(data=std_seg_data[,1:5], min.nc=3, max.nc=15, index="all", method="ward.D2")
+
+```
+
+## Targeting the Clusters/segments
+
+We can now study our demographics and choice data in light of these cluster assignments using the funcion CrossTable:
+
+### Demographics
+```{r,warning=FALSE}
+CrossTable(seg_data$MBA,h_cluster,prop.chisq = FALSE, prop.r = T, prop.c = T,
+           prop.t = F,chisq = T)
+```
+### Choice
+
+```{r,warning=FALSE}
+CrossTable(h_cluster,seg_data$Choice,prop.chisq = FALSE, prop.r = T, prop.c = T,
+           prop.t = F,chisq = T)
+```
+
+See lecture on how to identify variables for targeting.
+
+
+# K-Means
+
+We now focus on a different method called K-Means. This method, which requires us to specify in advance the number of clusters, aims to group the observations based on their similarity using an optimization procedure. Indeed, the aim is to minimize the within-cluster variation which is defined as the sum of square of the euclidean distance between each data point to the centroid of its cluster. More precisely, the algorithm works as follow:
+
+  1. Start by assigning each point to a cluster randomly
+  2. Compute the centroid of each cluster and the distances of each point to each centroid
+  3. Reassign each observation to the closest Centroid
+  4. Repeat Steps 2 and 3 until the within-cluster variance is minimized
+
+## Three Cluster Solution obtained using K-Means
+
+Let us start by observing how the algorithm works on our data for 3 segments. We use the function kmeans().  Don't forget to set the seed to a specific vaule (e.g., 1990).
+
+```{r}
+set.seed(1990)
+car_Cluster3 <-kmeans(std_seg_data, 3, iter.max=100,nstart=100)
+car_Cluster3
+```
+
+```{r}
+Kmean_Cluster<-factor(car_Cluster3$cluster,levels = c(1,2,3),
+                    labels = c("Perf. KM", "Comfort KM", "Appearance KM"))
+```
+
+## Find the optimal number of clusters
+
+A key question when using the K-Means clustering technique consists in choosing the optimal number of segments. In order to do that, we can use the function NbClust() as in hierarchical clustering by specifying the method kmeans as below. From the output, We see that the three-cluster solution is best. 
+
+
+```{r, warning=FALSE}
+set.seed(1990)
+NbClust(data=std_seg_data[,1:5], min.nc=3, max.nc=15, index="all", method="kmeans")
+```
+
+## Results Comparison
+Looking at the cluster means above, we see that the clusters defined with the kmeans function are characterized similarly as before. Thus, we relabel them to describe them more accurately. We can now compare this clustering to the demographics and choice as well as the hierarchical clustering.
+
+### Demographics
+```{r,warning=FALSE}
+CrossTable(seg_data$MBA,Kmean_Cluster,prop.chisq = FALSE, prop.r = T, prop.c = T,
+           prop.t = F,chisq = T)
+```
+
+### Choice
+
+```{r,warning=FALSE}
+CrossTable(Kmean_Cluster,seg_data$Choice,prop.chisq = FALSE, prop.r = T, prop.c = T,prop.t = F,chisq = T)
+```
+
+### Hierarchical Clustering
+
+```{r,warning=FALSE}
+CrossTable(h_cluster,Kmean_Cluster,prop.chisq = FALSE, prop.r = T, prop.c = T,
+           prop.t = F,chisq = T)
+```
+# Latent Class Analysis
+
+Latent Class Analysis is a method to identify cluster membership of subjects using the observable variables that describe them. The approach consists in estimating for each individual the probability to belong to a "latent class" or cluster. In turn, each cluster is defined in terms of its "geometry" and "orientation" as cloud of points. As such, this technique belongs to the family of gaussian finite mixture models. This approach relies on a different optimization procedure that aims to maximize the likelihood (versus minimize the distances between each point). Hence, the tools to assess the optimal number of classes differ. We now perform this analysis using the package mclust. We start by determining the optimal model based on BIC using the function mclustBIC().
+
+## Find the optimal model
+
+```{r}
+set.seed(1990)
+mclustBIC(std_seg_data[,1:5],verbose=F)
+```
+Hence, the optimal model is VEE with 2 segments. This means that the data can be clustered in two clusters which will both be modeled by a Normal distribution with the same covariance matrix. We obtain more details about the optimal model below:
+
+```{r}
+set.seed(1990)
+lca_clust <- Mclust(std_seg_data[,1:5],verbose = FALSE)
+summary(lca_clust)
+```
+We now interpret each cluster and rename them to describe them accurately:
+
+```{r}
+lca_clusters <- lca_clust$classification
+lca_clust_summary <- aggregate(std_seg_data[,c("Trendy", "Styling", "Reliability", "Sportiness", "Performance", "Comfort")],by=list(lca_clusters),FUN=mean)
+lca_clust_summary
+lca_clusters<-factor(lca_clusters,levels = c(1,2),
+                    labels = c("Reliability LCA", "Comfort LCA"))
+```
+
+## Results Comparison
+Let us compare this solution to the demographics and choice data as well as the hierarchical clustering and K-Means:
+
+### Demographics
+
+```{r,warning=FALSE}
+CrossTable(seg_data$MBA,lca_clusters,prop.chisq = FALSE, prop.r = T, prop.c = T,
+           prop.t = F,chisq = T)
+```
+### Choice
+
+```{r,warning=FALSE}
+CrossTable(lca_clusters,seg_data$Choice,prop.chisq = FALSE, prop.r = T, prop.c = T,
+           prop.t = F,chisq = T)
+```
+
+### Hierarchical Clustering
+ 
+```{r,warning=FALSE}
+CrossTable(h_cluster,lca_clusters,prop.chisq = FALSE, prop.r = T, prop.c = T,
+           prop.t = F,chisq = T)
+```
+
+### K-Means Clustering
+ 
+```{r,warning=FALSE}
+CrossTable(Kmean_Cluster,lca_clusters,prop.chisq = FALSE, prop.r = T, prop.c = T,
+           prop.t = F,chisq = T)
+```
