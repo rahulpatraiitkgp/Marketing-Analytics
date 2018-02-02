@@ -1,0 +1,154 @@
+---
+title: "Application of Factor Analysis on Car Perception Data"
+output:
+  html_notebook: default
+  html_document: default
+  pdf_document: default
+---
+
+This notebook shows how to perform Factor Analysis with R and how to use the output to construct a perceptual map.  To perform this analysis you need to install these R packages:
+1. nFactors
+2. ggplot2
+3. ggrepel
+4. psych
+5. scatterplot3d
+
+# Reading and outputing data
+
+The dataset includes data from 92 respondents regarding their perception of six sedans (Acura, BMW, Cadillac, Lexus, Lincoln, Mercedes) on six attributes (Trendy/innovative, Styling, Reliability, Sportiness, Performance, Comfort), each measured on a ten-point scale (1=low, 10=high rating). The data excerpt below shows the rating data of respondeent (ID=1).  It also shows two additional variables: The respondent education level (MBA vs. Undergrad) and his or her preference rating for each sedan (also measured) on a 10 point scale (1=low and 10=high preference).  We use this dataset to answer the following questions:
+1. How many factors underly consumers' perceptions of the six sedans? What are they?
+2. Does consumer perception vary by level of education?
+3. How does consumer perception impact consumer preference for cars?
+
+To answer these questions, we first apply factor analysis on the attribute rating data to derive the factors and construct a perceptual map. We then compare the maps of MBA and undergraduate students to see if they are different.  Finally, we will run a regression where preference is the dependent variables and the factor scores are the independent variables.  The regression output will reveal the relative importance of the factors in preduicting consumer preference for cars.
+
+```{r}
+cardata = read.csv(file = "cardata.csv")
+head(cardata)
+```
+
+The first analysis decision in factor analysis is to determine the number of factors to retain.  The second decision is to understand the factor structure of the data.
+
+Let's determine the number of factors.  Note that we will factor analyze only the attribute ratings (variables 4:9).
+
+#Determining the Number of Factors 
+
+We can use nScree() to answer this question. 
+
+```{r}
+library(nFactors)
+nScree(cardata[,4:9], cor=TRUE) #This function help you determine the number of factors
+```
+
+The Kaiser criterion (nkaiser) corresponds to the eigenvalue > 1 criterion when factor analysis is applied on the correlation matrix.  The acceleration factor criterion (naf) is based on the elbow criterion in the scree plot. Parallel analysis (nparallel) and optimal coordinates (noc) are two other methods. As you can see all four criteria indicated one factor to retain. 
+
+The decision of how many factors also involves judgement on the part of the marketing analyst.  It hinges on what the analyst wants to highlight from the data. It is quite possible that one factor may fail to portray important information in the data.  In such a case, it is worthwile to run factor analysis, say from 1 to 5 factors (without Varimax rotation), to see how much variance it is explained as we extract varying number of factors.  We do this analysis below.
+
+```{r}
+fit <- principal(cardata[,4:9], nfactors=5, rotate="none")
+fit$loadings
+```
+
+The SS loadings in the bottom panel of the output above are the eigenvalues of the correlation matrix. The eigenvalue criterion (eigenvalue less than one) suggests one factor.  However, the second eigenvalue (=0.935) is close to one, suggesting that factor 2 may have important information.  The cumulative Var criterion suggests that one factor captures 64.5% of the variance of the data; two factors explain 80.1% of thew data; and three factors capture 88% of the data.  However, the improvement from three to four factors is very marginal.  The fourth factor explains only 4.7% of the variance.  This analysis suggests that a two- or three-factor solution is worthwile examining.  Let's look at a rotated three-factor solution.
+
+
+```{r}
+fit <- principal(cardata[,4:9], nfactors=3, rotate="varimax")
+fit$loadings
+```
+
+It looks from this analysis that a three-factor solution has a good interpretation.  The first factor loads high on Trendy, Styling, and Sportiness.  We call this factor Car Appearance.  The second factor loads high on Relaiability and Performance.  We call it Car Performance.  The third factor loads only on Comfort.  Given the clear interpretation of the three factors, we retain this solution for further analysis.
+
+```{r}
+colnames(fit$weights) = c("Appearance", "Performance", "Comfort") # Naming the factors
+fit$weights #printing the factor weights
+```
+
+The factor weights show how the factor scores are obtained.  For example, the scores on factor 1 are obtained as follows:
+Appearance=0.45Trendy + 0.40Styling + ... -0.09Comfort
+
+Note that all the attribute ratings are standardized to mean zero and unit variance when computing the factor scores.  In such a case, each factor will also be standardized.
+
+```{r}
+colnames(fit$scores) = c("Appearance", "Performance", "Comfort") 
+reduced_data = cbind(cardata[,1:3],fit$scores) #binding the factor scors to the raw data
+head(reduced_data) #printing the data for first respondent
+```
+
+The table above reports the factor scores of respondent ID=1.  Note that his or her data are reduced from six attributes to only three factors.
+
+To produce a perceptual map, we need to compute the average factor scores for each car brand.  The output is given below.
+
+```{r}
+attach(reduced_data)
+brand.mean=aggregate(reduced_data[,c(4:6)], by=list(Brand), FUN=mean, na.rm=TRUE)
+detach(reduced_data)
+head(brand.mean)
+```
+
+We are now ready to produce a three-dimensional perceptual map of the cars.
+
+# Three dimensional perceptual map
+
+```{r}
+attach(brand.mean)
+# 3D Scatterplot
+library(scatterplot3d)
+s3d <- scatterplot3d(Appearance, Performance, Comfort,
+                     scale.y = 1, type='h', asp = 1,
+                     main="3D Perceptual Map")
+text(s3d$xyz.convert(Appearance, Performance, Comfort + c(rep(0.05,5),0.1)),
+     labels=(brand.mean[,1]), 
+     col = 'red')
+detach(brand.mean)
+```
+
+To examine whether MBA and undergraduate students perceive cars differently, we calculate average brand perception for each of these two groups of students.
+
+```{r}
+attach(reduced_data)
+brand_by_edu=aggregate(reduced_data[,c(4:6)], by=list(Brand, Education), 
+                       FUN=mean, na.rm=TRUE)
+colnames(brand_by_edu) = c("Brand", "Edu", "Appearance", "Performance", "Comfort")
+detach(reduced_data)
+brand_by_edu # Print the average factor scores by brand and education
+```
+
+Below is a joint map of MBA and undergraduate students perception of cars.
+
+```{r}
+attach(brand_by_edu)
+# 3D Scatterplot
+library(scatterplot3d)
+s3d1 <- scatterplot3d(brand_by_edu[,3], brand_by_edu[,4], 
+        brand_by_edu[,5], xlab = "Appearance", 
+        ylab = "Performance", zlab = "Comfort",
+        scale.y = 1, type='h', asp = 1,
+        main="3D Perceptual Map")
+tmp <- brand_by_edu[which(brand_by_edu$Edu == 'MBA'),]
+text(s3d1$xyz.convert(tmp$Appearance, tmp$Performance, 
+       tmp$Comfort + c(rep(0.05,5),0.1)),
+       labels=(tmp$Brands), col = 'darkgreen')
+tmp <- brand_by_edu[which(brand_by_edu$Edu=='Undergrad'),] 
+text(s3d1$xyz.convert(tmp$Appearance, tmp$Performance, 
+       tmp$Comfort + c(rep(0.05,5),0.1)),
+       labels=(tmp$Brands), col = 'red')
+legend(-3, 8, 
+       legend=c("MBA", "Undergrad"),
+       col=c("red", "darkgreen"), lty=1, cex=0.8)
+```
+
+Except for Cadillac and Lincoln, there is a little difference in perceptions between these two groups of students about the remaining five car brands.  We now examine the drivers of car preference using regression analysis.
+
+```{r}
+# Append preference data
+red_data = cbind(cardata[,c(2,3,10)], fit$scores)
+colnames(red_data) = c("Brand", "Edu", "Preference", "Appearance", "Performance", "Comfort")
+head(red_data)
+
+# Multiple Linear Regression 
+regfit <- lm(Preference ~ Appearance + Performance + Comfort, data=red_data)
+summary(regfit) # show results
+```
+
+The regression output suggests that car Appearance is the most important driver of student preference for cars ($\beta=1.56; \ p,0.01$), followed by Performance ($\beta=1.10; \ p,0.01$), and Comfort ($\beta=0.53; \ p,0.01$). Cadillac, for example, should improve its appearance (e.g., styling) and perormance if it wants to have a better appeal in this market segment. The R-Squared for this regression is only 18.99%.  This suggests that there are other drivers of preference beyond consumer perception (e.g., price). 
