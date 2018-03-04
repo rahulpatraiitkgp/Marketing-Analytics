@@ -1,0 +1,66 @@
+---
+title: "Matrix Factorization for Recommender Systems"
+author: "Asim Ansari"
+output: html_notebook
+---
+
+We will use this notebook to illustrate how matrix factorization can be used via the recosystem package. We will use this package on simulated data. We use two data files. The file train.csv contains the training set and the data test.csv contains the test dataset. The data involve 3 columns, user, movie and rating. The user column contains the id of the user, the movie column is the id of the movie and the Rating column gives the rating, on a scale of 1-5, that the users assigned to the movies. The train set contains the movies that have been rated by the users. You can imagine the test set to not contain any ratings. These are the missing ratings, in a real life context. The recommendation task is to predict the rating for the movies in the test dataset and recommend those that are predicted to be highly liked by a user. 
+
+```{r}
+ data_train <- read.csv("/home/maa48/Dropbox (CBS)/teaching/MarketingAnalytics/Clv/train.csv")
+```
+
+```{r}
+data_test <-read.csv("/home/maa48/Dropbox (CBS)/teaching/MarketingAnalytics/Clv/test.csv")
+```
+
+
+```{r}
+summary(data_train)
+```
+We call the recosystem package and set the random number seed.
+
+```{r}
+library(recosystem)
+set.seed(145)
+
+```
+
+We now tune the matrix factorization algorithm to figure out the best combination of tuning parameter values that will increase the predictive accuracy. In the command below, we use index1=TRUE because the user and item ids start with 1, rather than 0. The tuning is done over a set of parameter values involving a combination of two settings of latent vector dimensionality, dim=5, or dim=10, three different values of the learning rate, lrate, and for 100 iterations, involving 5 fold cross validation. 
+
+```{r}
+r=Reco()
+opts<-r$tune(data_memory(data_train$User,data_train$Movie, rating=data_train$Rating, index1=TRUE), opts=list(dim=c(5,10), lrate=c(0.05,0.1, 0.15),  niter=200, nfold=5, verbose=FALSE))
+```
+
+Having tuned the matrix factorization algorithm, we can train it on our training dataset, using the best set of options obtained while tuning. These options are output below. We see that a 10 dimensional solution, with l2 penalty of 0.1 for the p factors and a l2 penalty of 0.01 for the q factors and a stochastic gradient descent learning rate of 0.15 is chosen as part of the cross-validation effort. 
+
+```{r}
+opts$min
+```
+We now use the above options to train the model on the training data. We restrict ourself to 200 iterations. 
+
+```{r}
+r$train(data_memory(data_train$User, data_train$Movie, rating=data_train$Rating, index1=TRUE), opts=c(opts$min, nthread=1, niter=200))
+```
+We can store the latent vectors P and Q for the users and the movies in the object named res below. 
+
+```{r}
+res <- r$output(out_memory(), out_memory())
+
+```
+
+
+We can also predict the ratings in the test data using the predict command and store the results in a vector predMem. 
+
+```{r}
+predMem <- r$predict(data_memory(data_test$User,data_test$Movie, rating=NULL, index1=TRUE),out_memory())
+```
+
+As we know the ratings in the test dataset, we can calculate the root mean square error between the predicted ratings from the model and the actual ratings in the test dataset. Note that the RMSE gives the predictive performance as the test data was never used in tuning and training the model. The RMSE value by itself is not very userful, iif a single method is used. However, we can compare the predictive accuracy of several methods by comparing their rmse values.
+
+```{r}
+rmse=sqrt(mean((predMem-data_test$Rating)^2))
+rmse
+```
+

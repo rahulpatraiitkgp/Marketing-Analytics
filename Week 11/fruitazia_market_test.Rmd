@@ -1,0 +1,73 @@
+---
+title: 'R Notebook: Market Test - Fruitazia'
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+header-includes: \usepackage{bbm}
+---
+
+## Packages
+
+Make sure the following packages are installed before proceeding:
+
+1. ggpubr
+2. knitr
+
+```{r}
+library("ggpubr") # anova visualization
+library("knitr") # used for report compilation and table display
+```
+
+## Market test
+
+In this notebook we will explore how statistical analysis can help us determine advertising effectiveness using market test data.
+
+## Data
+
+We will work with *fruitazia.csv* file. The data presents results of a market test for fruit juice with 2 advertising levels $\times$ 3 price levels, which gives us 6 experimental conditions, with 5 supermarkets per condition.
+
+```{r}
+# loading data
+data <- read.csv(file = "fruitazia.csv")
+data$AdSpend <- as.factor(data$AdSpend)
+data$Price <- as.factor(data$Price) 
+data
+```
+
+In the data, each out of 30 rows encodes experiment description per supermarket, including set price and advertising expenditure as well as the resulting sales. Sales are in thousands of cases. Price is in dollars. Ad spend is in million dollars. The rest of the variables are dummies encoding distinct price, ad spend levels, and their interactions.
+
+## Data summary
+
+Let us see sales averages by price and ad spend levels.
+
+```{r}
+kable(aggregate(Sales ~ Price + AdSpend, data=data, FUN=mean))
+```
+
+Here is how we can plot the means and other supporting information.
+
+```{r}
+ggline(data, x = "Price", y = "Sales", color = "AdSpend",
+       add = c("mean_se", "dotplot"), palette = c("#00AFBB", "#E7B800"))
+```
+
+## ANOVA - no interaction terms
+
+Here is how we perform basic analysis of variance using *lm()* function. All effects are highly statistically significant at $0.05$ level. When we use *anova()* command on the *lm()* output, we obtain information about the overall significance of each factor, rather than of a specific level of a factor.
+
+```{r}
+model <- lm(Sales ~ Price + AdSpend, data=data)
+summary(model)
+anova(model)
+```
+
+## ANOVA - with interactions
+
+Here is how we perform the same analysis with interaction terms between ad spend and price levels added in. We see that advertising is less effective at higher price levels. This interaction effect is statistically significant at $0.05$ level only for $\$5.9$ price.
+
+```{r}
+model1 <- lm(Sales ~ Price * AdSpend, data=data)
+summary(model1)
+anova(model1)
+```

@@ -1,0 +1,157 @@
+---
+title: "Pricing Optimization"
+output: html_notebook
+---
+
+This notebook shows how to perform price optimization when willingness to pay (wtp) data are available from different individuals. We show how to fit a normal distribution and a logistic distribution to the data and compute the implied demand curve. We also show how to compute the optimal profits and optimal prices, given variable costs and estimates of the market size. 
+
+## Reading Data
+
+```{r}
+priceData <- read.csv("/Users/gss_wacom_mm/Desktop/Asim/Fwd Files For 11:10:2017/wtpData.csv")
+```
+
+```{r}
+summary(priceData)
+
+```
+We compute the standard deviation of the sample. 
+
+```{r}
+sd(priceData$Wtp)
+```
+
+## WTP Distributions
+
+We make a density histogram of the WTP data below.
+
+```{r, fig.width=4}
+
+library(ggplot2)
+
+base<-ggplot(priceData, aes(x=Wtp)) + geom_histogram(aes(y=..density..), binwidth=3, color="black",fill="#FCCF7A", size=0.1)+theme_minimal()+ylab("Density")
+
+base
+```
+
+## Normal Distribution
+
+We can superimpose the normal density curve on the histogram to visually assess the fit of the distribution. We use the method of moments (MOM), which involves equating the sample moments (the sample mean and the sample standard deviaion) to the theoretical moments of the normal distribution. 
+
+```{r, fig.width=4}
+
+m<-mean(priceData$Wtp)
+s<-sd(priceData$Wtp)
+
+base+stat_function(fun=dnorm, args=list(mean=m, sd=s), color="black")
+```
+
+We can also use th fitdistrplus package to fit the normal density to the data, using the method of maximum likelihood. These give the maximum likelihood estimates of the normal mean and standard deviations, along with the uncertainty estimates given by the standard errors for these parameters.  We see that the ML estimates are very similar to the MOM estimates.
+
+```{r}
+library(fitdistrplus)
+fitn<-fitdist(priceData$Wtp, "norm")
+summary(fitn)
+```
+
+Having fit a normal, we will now explore how well a logistic distribution fits the data. As above, we will first use the method of moments, and then the MLE. 
+
+## Logistic Distribution
+
+We now fit a logistic distribution to the above histogram by equating the theoretical moments (i.e, mean and variance) of the distribution with those calculated from the sample. 
+
+```{r, fig.width=4}
+
+m<-mean(priceData$Wtp)
+s<-sqrt(var(priceData$Wtp)*3/pi^2)
+
+base+stat_function(fun=dlogis, args=list(location=m, scale=s), color="black")
+```
+We now fit the logistic distribution using maximum likelihood methods.
+
+```{r}
+library(fitdistrplus)
+fitw<-fitdist(priceData$Wtp, "logis")
+summary(fitw)
+```
+As the normal and the logistic are both two parameter distributions, we can directly compare the likelihood. Alternatively, we can compute the BIC statistics for the two fits. We can see that the logistic results in a slightly better fit than the normal distribution, so we will use the logistic distribution for the rest of the document. 
+
+## Demand Curve for Logistic WTP
+
+We now write a function that computes the demand function based on the logistic distribution. Note that the demand at a given price p is given by (1 - cdf(p)) multiplied by the marketSize. 
+
+```{r}
+demand<-function(x,m,s, mktSize){
+  mktSize*(1-plogis(x, location = m, scale = s))
+}
+```
+
+We can plot the demand curve as follows. 
+
+```{r, fig.width=4}
+mktSize<-10000
+
+ggplot(priceData, aes(x=Wtp))+stat_function(fun=demand, args=list(m,s, mktSize), color="Black")+theme_minimal()+ylab("Demand")+xlab("price")
+```
+
+
+## Profit function
+
+We can similarly write a function for computing the profits at any given price. Notice that we write below a function that returns the negative of the profit. 
+
+```{r}
+profit<-function(price, cost, m, s, mktSize){
+  (price-cost)*demand(price, m, s, mktSize)
+}
+```
+
+We can compute the profit at two different prices as shown below.
+
+```{r}
+profit(35, 15, m, s, 10000)
+profit(20, 15, m, s, 10000)
+```
+
+## Optimal Price and Profit
+
+We can now compute the optimal profit by using the optim function. The optim command minimizes the function, so we use the negative profit, as minimizing -profit is the same as maximizing profit. We see that the optimal price is 43.70 and the optimal profit is 262560. 
+
+```{r}
+res<-optim(22,profit, cost=15, m=m, s=s, mktSize=10000,method="BFGS", control=list(fnscale=-1))
+
+optPrice<-res$par
+optProfit<-(res$value)
+
+optPrice
+
+optProfit
+
+```
+
+## Bootstrapping Demand Curves
+
+We can use bootstapping to construct 1000 bootstrap samples, compute the logistic demand parameters based on these samples, compute the profit function based on these parameter values  and finally compute the profit that we obtain we set the price to our optimal price for each of the parameter values. 
+
+```{r}
+
+n<-60
+
+bootProfit<-rep(0.0, 1000)
+cost<-15
+
+for(i in 1:1000){
+  bsample<-sample(priceData$Wtp, n, replace=TRUE)
+  mb<-mean(bsample)
+  sb<-sqrt(var(bsample)*3/pi^2)
+  bootProfit[i]<-(profit(optPrice, cost, mb, sb, 10000))
+}
+
+```
+
+Finally we can compute a bootstrap interval for the range of profits that we could realize, if we were to set the price to the optimal price calculated based on our original sample. 
+
+```{r}
+quantile(bootProfit, probs=c(0.025, 0.975))
+```
+
+

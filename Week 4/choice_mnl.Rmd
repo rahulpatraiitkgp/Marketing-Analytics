@@ -1,0 +1,194 @@
+---
+title: 'R Notebook: Multinomial Logit'
+output:
+  html_document: default
+  html_notebook: default
+header-includes: \usepackage{bbm}
+---
+
+## Packages
+
+Make sure the following packages are installed before proceeding:
+
+1. xtable 
+2. knitr
+3. mlogit
+4. caret
+5. e1071
+
+```{r}
+library("xtable") # processing of regression output
+library("knitr") # used for report compilation and table display
+library("ggplot2") # very popular plotting library ggplot2
+library("ggthemes") # themes for ggplot2
+suppressMessages(library("mlogit")) # multinomial logit
+library("caret")
+```
+
+## Multinomial logit
+
+Multinomial logit, in contrast to simple binomial logisic regression, is used for modeling choices among multiple alternatives.
+
+Once the choice model has been estimated, we can use the parameter estimates to assess relative importance of different attributes in predicting the probability of choice.
+
+## Data
+
+You will work with provided *trasportation_data.csv* file. 
+
+```{r}
+data <- read.csv(file = "transportation_data.csv")
+```
+
+The file contains data 210 travelers making a choice between 4 different modes of transport (plane, train, bus, car). Each traveler made a choice only once. Each alternative is a new row, so there are 4 rows per traveler -- sequentially. Thus, the file contains 210 * 4 = 840 rows. 
+
+```{r}
+kable(head(data,8))
+```
+
+In the table above, for example, the first four rows (1:4) form a choice set for the first traveler. Rows (5:8) are the choice set of the second traveler, and so on.
+
+Column 1 "Traveler" is traveler's id, column "Mode" helps identify which alternative was chosen by the traveler from the choice set -- it contains 1 if the row represents the mode of transportation the traveler chose, and 0 otherwise. Per traveler, rows map to modes of transportaion in the following order:
+
+1 - plane (air)
+2 - train
+3 - bus
+4 - car
+
+TTME, INVC, INVT are variables that describe the options, whereas HINC describes the traveler.
+
+- TTME = terminal waiting time for plane, train and bus (minutes); 0 for car.
+- INVC = in-vehicle cost (dollars).
+- INVT = travel time (minutes).
+- HINC = household income ($1000s).
+
+All variables are treated as continuous.
+
+## Descriptive statistics
+
+```{r}
+transp_dec<-rbind(
+colSums(data[seq(1, nrow(data), 4), ])/210,
+colSums(data[seq(2, nrow(data), 4), ])/210,
+colSums(data[seq(3, nrow(data), 4), ])/210,
+colSums(data[seq(4, nrow(data), 4), ])/210)
+transp_dec<-transp_dec[,c(2:5)]
+colnames(transp_dec) <- c('CHOICE SHARE','AVG. WAITING TTME', 'AVG. COST', 'AVG. TRAVEL TIME')
+kable(transp_dec)
+```
+
+```{r}
+Household_Income <- data[seq(1, nrow(data), 4), 6]
+summary(Household_Income)
+hist(Household_Income)
+```
+
+## MNL model estimation - product attributes only
+
+Based on the provided data, we will estimate the multinomial logit model.
+
+First, we estimate a model that is trained just using 3 variables that describe the alternatives (TTME, INVC, INVT) and intercept corresponding to trasportation mode (normalizing plane intercept to zero, $\beta_{01}=0$). That is, \begin{align*}
+V_j = & \beta_{0j}+\beta_{1}\text{TTME}_j + \beta_{2}\text{INVC}_j + \beta_{3}\text{INVT}_j
+\end{align*}
+$U_j = V_j + \text{error}$. Assuming independent extreme value error distribution, traveler chooses mode of transportation $j$ from the choice set of four alternatives with probability $$p_j = \frac{\exp(V_j)}{\exp(V_1)+\exp(V_2)+\exp(V_3)+\exp(V_4)},\ \ j\in\{1,2,3,4\}$$
+
+Clearly, $p_1+p_2+p_3+p_4=1$
+
+```{r}
+require('mlogit')
+mdata <- mlogit.data(data=data,
+                     choice='MODE', # variable that contains choice
+                     shape='long', # tells mlogit how data is structured (every row is alternative)
+                     varying=3:5, # only select variables that describe the alternatives
+                     alt.levels = c("plane", "train", "bus", "car"), # levels of the alternatives
+                     id.var='TRAVELER') # consumer id
+head(mdata,6)
+
+set.seed(999)
+model <- mlogit(MODE~TTME+INVC+INVT,data=mdata)
+summary(model)
+```
+Here is how likelihood ratio test is done, more explicitly.
+
+```{r}
+model.null <- mlogit(MODE~1,data=mdata)
+lrtest(model,model.null)
+```
+
+We can also use the estimated parameters to predict the probabilities of the choice for different trasportation modes in the data. Here we print the prediction for the first traveler in the data. 
+
+```{r}
+kable(head(predict(model,mdata),1))
+```
+
+And now we can measure the accuracy of prediction across all data.
+
+```{r}
+predicted_alternative <- apply(predict(model,mdata),1,which.max)
+selected_alternative <- rep(1:4,210)[data$MODE>0]
+confusionMatrix(predicted_alternative,selected_alternative)
+```
+Note that if the predictions were random, the accuracy would be 25% (for four alternatives). Our simple model is doing much better than that -- although it is not perfect.
+
+## Model with demographics
+
+Now we will estimate a model that also includes a demographic variable -- household income. However, we cannot just include it as an ordinary alternative-specific variable -- this is because demographics for one individual would be the same across all alternatives, and so would cancel out from the probability expression as follows (so we cannot estimate the parameter $\beta_4$)
+
+\begin{align*}
+p_{bus} &=  \frac{\exp(\cdots_{bus} + \beta_4 \text{HINC})}{\exp(\cdots_{car} + \beta_4 \text{HINC}) + \cdots + \exp(\cdots_{plane} + \beta_4 \text{HINC})}\\
+&= \frac{\exp(\cdots_{bus})\exp(\beta_4 \text{HINC})}{\exp(\cdots_{car})\exp(\beta_4 \text{HINC}) + \cdots + \exp(\cdots_{plane})\exp(\beta_4 \text{HINC})}\\
+&= \frac{\exp(\cdots_{bus})}{\exp(\cdots_{car}) + \cdots + \exp(\cdots_{plane})}
+\end{align*}
+
+To deal with this issue, we need to interact the demographic variable with a dummy code for each alternative and then estimate the model. Specifically, we are now estimating utility equation where
+
+\begin{align*}
+V_j = & \alpha_{0j} + \alpha_{1j}HouseholdIncome +\beta_{1}\text{TTME}_j + \beta_{2}\text{INVC}_j + \beta_{3}\text{INVT}_j
+\end{align*}
+
+with intercept terms for air normalized to zero: $\alpha_{01}=\alpha_{11}=0$. $\alpha_{0j}$ here has the same interpretation as an intercept term in no-demographics model -- that is, inherent utility of a trasportation mode relative to travel by plane. And $\alpha_{1j}$ now measures additional (dis)utility from a trasportation mode at higher income level (again, relative to the plane).
+
+This is how we would estimate the model
+
+```{r}
+model1 <- mlogit(MODE~TTME+INVC+INVT|HINC,data=mdata)
+summary(model1)
+```
+
+And here is how we can use likelihood ratio test to test the second model against the first one.
+
+```{r}
+lrtest(model1,model)
+```
+
+Let us look at the new confusion matrix.
+
+```{r}
+predicted_alternative <- apply(predict(model1,mdata),1,which.max)
+selected_alternative <- rep(1:4,210)[data$MODE>0]
+confusionMatrix(predicted_alternative,selected_alternative)
+```
+
+Finally, using this model with income, we can simulate how choice share of different modes of transport will change if we reduce in-vehicle time in train by 10% (multiply it by $0.9$). We observe that train share increases by 5\%, while bus share is most negatively affected of all modes of transport.
+
+```{r}
+mdata.new <- mdata
+mdata.new[seq(2,840,4),"INVT"] <- 0.9*mdata.new[seq(2,840,4),"INVT"]
+predicted_alternative_new <- apply(predict(model1,mdata.new),1,which.max)
+
+table(predicted_alternative)/210 # probability under original data
+table(predicted_alternative_new)/210 # probability after decrease in train travel time
+
+(table(predicted_alternative_new) - table(predicted_alternative))/table(predicted_alternative)
+```
+
+## Interaction effects
+
+Finally, we can also interact a demographic variable with product attributes. Let us do it and see whether including corresponding terms contributes to the model's quality.
+
+```{r}
+model2 <- mlogit(MODE~TTME+INVC+INVT+TTME:HINC+INVC:HINC+INVT:HINC|HINC,data=mdata)
+summary(model2)
+lrtest(model2,model1)
+```
+
+We find that adding such interaction terms does not improve model significantly.

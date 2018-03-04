@@ -1,0 +1,147 @@
+---
+title: "Targeted Optimal Bidding"
+output:
+  html_notebook: default
+  pdf_document: default
+---
+In this notebook we see how we can model bidding data from a B2B retailer to a) figure out what determines the probability of the customer accepting a bid and b) determine the optimal price to quote for a given customer for a given bid. We will use logistic regression followed by optimization for this task. 
+
+We begin by reading the data from the file RawShort1.csv in our working directory.
+
+```{r}
+wd<-getwd()
+```
+
+
+```{r}
+bd <- read.csv(file.path(wd,"RawShort1.csv"))
+```
+
+```{r}
+summary(bd)
+```
+# Logistic Regression
+
+We can perform a logistic regression and summarize it. We begin by running a logistic regression of the order (0/1) variable on the Time, Quantity and PricePerLb variables. We see below that all three coefficients are negative. This means that greater the time since the previous contact, the lower is the probability of our bid getting accepted, the larger is the quantity desired, the lower is the chance of acceptance, and the higher the price we quote, the lower is the chance of acceptance. 
+
+```{r}
+res1 <- glm(Order ~ Time+Quantity+PricePerLb, data=bd, family=binomial(link = "logit"))
+summary(res1)
+```
+
+## Predictions
+
+Suppose we are interested in using the results to make predictions on future data. Let us take the first three observations of our data and store it in a dataframe df1. 
+
+```{r}
+df1<-bd[1:3,]
+df1
+```
+
+We can use the results of our logistic regression (stored in the object res1) and make a prediction for the observation in df1. 
+
+```{r}
+predict.glm(res1, newdata=df1, type="response")
+```
+We can write a function that computes the profits for a given price x and the values of the other variables. The function also takes as an argument, hold_obs, which contains the values of the other variables (CostPerLb and Quantity) that are needed for the profit computation. In the function below, we make sure we insert the new price x into the observation before computing the probabilities and the profit. 
+
+```{r}
+pf1<-function(x, hold_obs, result)
+{
+  df_hold <- hold_obs
+  df_hold$PricePerLb <-x
+  prob <- predict.glm(result, newdata=df_hold, type="response")
+  profit <- (x-df_hold$CostPerLb)*prob*df_hold$Quantity
+  profit
+}
+```
+
+Let us compute the profit for the first observation of the data frame df1. 
+
+```{r}
+pf1(2, df1[1,], res1)
+```
+
+We can optimize the profit by using the built-in optim function in R. We use a starting value of 4.0 for the optimal price, and store the optimization results in opt. 
+
+```{r}
+opt1<-optim(4.0, pf1, method="BFGS", control=list(fnscale=-1), hold_obs=df1[1,], result=res1)
+```
+The optimal price and the optimal profit can be extracted from the optimization result as below. Note that the optimal price of $7.09 appears too high to be reasonable, and thus we need to think critically about the model that we have specified. We now see how this model can be extended to include reference effects that may be operant in a given situation.
+
+```{r}
+c(opt1$par, opt1$value)
+```
+
+## Logistic regression with reference prices. 
+
+We create two variable, loss and gain, to capture reference price effects, as detailed in the handout. We then store this in the bd dataframe. 
+
+```{r}
+gain <- (bd$LagPrice - bd$PricePerLb)*(bd$LagPrice > bd$PricePerLb)
+
+loss <- (bd$PricePerLb - bd$LagPrice)*(bd$PricePerLb > bd$LagPrice)
+
+bd$gain <- gain
+
+bd$loss <- loss
+
+```
+
+We now do a logistic regression that includes these reference effects and their interactions with the quantity variable.
+
+```{r}
+res2 <- glm(Order ~ Time+Quantity+gain+loss+Quantity:gain+Quantity:loss, data=bd, family=binomial(link = "logit"))
+summary(res2)
+```
+
+## Predictions
+
+Suppose we are interested in using the results to make predictions on future data. Let us take the first two observations of our data and store it in a dataframe df2. Assume that these are from a holdout dataset. 
+
+```{r}
+df2<-bd[1:2,]
+df2
+```
+
+We can use the results of our logistic regression (stored in the object res2) and make a prediction for the observation in df2. 
+
+```{r}
+predict.glm(res2, newdata=df2, type="response")
+```
+We now write a profit function, that takes a price (x), a holdout observation, (hold_obs), and the result of a logistic regression (result) to compute the profit function. Note that for any price x, we need to compute the gain and loss variables before computing the profit. The profit is equal to (price-cost)*orderProbability*Quantity
+
+```{r}
+pf2<-function(x, hold_obs, result)
+{
+ 
+  df1<-hold_obs
+  
+  df1$gain <- (df1$LagPrice - x)*(df1$LagPrice > x)
+  df1$loss <- (x - df1$LagPrice)* (x > df1$LagPrice)
+  
+  prob <- predict.glm(result, newdata=df1, type="response")
+  profit <- (x-df1$CostPerLb)*prob*df1$Quantity
+  profit
+  
+}
+```
+
+We can compute the profit for the first observation of df2. Note that df2[1,] gives the first observation of the dataframe df. 
+
+```{r}
+pf2(2.5, df2[1,], res2)
+```
+
+We can optimize the profit by using the built-in optim function in R. We use a starting value of 4.0 for the optimal price, and store the optimization results in opt. 
+
+```{r}
+opt2<-optim(4.0, pf2, method="BFGS", control=list(fnscale=-1), hold_obs=df2[1,], result=res2)
+```
+
+The optimal price and the optimal profit is given below. These values are very reasonable, compared to the previous ones that we obtained based on the simpler model. 
+
+```{r}
+c(opt2$par, opt2$value)
+```
+

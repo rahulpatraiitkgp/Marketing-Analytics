@@ -1,0 +1,29 @@
+Price,BrandOS,Storage,ImageQuality,Margin
+40,Google,0GB,HD,25
+40,Google,6GB,HD,17
+40,Google,16GB,HD,10
+40,Google,32GB,HD,5
+40,Google,0GB,Full HD,15
+40,Google,0GB,HDR+4K,5
+70,Google,0GB,HD,55
+70,Google,6GB,HD,47
+70,Google,16GB,HD,40
+70,Google,32GB,HD,35
+70,Google,0GB,Full HD,45
+70,Google,6GB,Full HD,37
+70,Google,16GB,Full HD,30
+70,Google,0GB,HDR+4K,35
+70,Google,6GB,HDR+4K,27
+70,Google,16GB,HDR+4K,20
+100,Google,0GB,HD,85
+100,Google,6GB,HD,77
+100,Google,16GB,HD,70
+100,Google,32GB,HD,65
+100,Google,0GB,Full HD,75
+100,Google,6GB,Full HD,67
+100,Google,16GB,Full HD,60
+100,Google,32GB,Full HD,55
+100,Google,0GB,HDR+4K,65
+100,Google,6GB,HDR+4K,57
+100,Google,16GB,HDR+4K,50
+100,Google,32GB,HDR+4K,45

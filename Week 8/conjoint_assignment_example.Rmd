@@ -1,0 +1,370 @@
+---
+title: "Rating-based conjoint analysis and product line optimization example"
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+---
+# Introduction
+
+This is an example of rating-based conjoint that is useful for the Week 8 Coding Assignment. We will use the concepts from week 7 and week 8.
+
+We will analyze the responses for a conjoint survey of 10 respondents that rated 18 profiles for coffee from 1(lowest) to 7(highest). This example is similar to the one seen in the lecture, with the main difference that in this example we are using the answers for 10 respondents, and repeat most of the steps for obtaining the partworths of one respondent, but in this case we will do it for 10. We assume that these 10 respondents are a representative sample of the market. 
+
+We will support the decision of the company "Coffee and Donuts". The company is interested in three major things: 
+
+1. Analyze the market preferences
+
+2. Estimate the current market share, as well as the market share if they were to introduce only one product to compete against them.
+
+3. Find the optimal product line of maximum size 3 (set of at most 3 products) to compete with the products that are currently available in the market, to maximize profitability.
+
+There are three files that we are going to use. 
+
+- *example_fullData.csv*: contains the data on the coffee products profiles (rows), and 10 extra columns with the ratings that each respondent gave to each product profile. 
+- *example_Products.csv*: contains the data for the three coffee products that are currently available in the market (which have a 1 for the column *Available*), as well as the potential products that the brand "Coffee and Donuts" is considering launching (which have a 0 for the column *Available*). The company is considering one of the products of the latter group as a single product introduction to compete with the rest of the products, this is, they are only introducing one out of the three "Coffee and Donuts" coffee products.
+- *example_ProductLine.csv*: contains the data for all possible products that the brand "Coffee and Donuts" can have as part of their product line. This is the complete feasible set of products that the company can launch as a part of their product line.
+
+In this example we will analyze preferences of respondents over coffee products. This conjoint design has 4 attributes: Price, Brand, Size, and Class (type of coffee). Two of these attributes have 3 levels, adn the other two have 4 levels. The levels are shown in the table.
+
+
+Price | Brand              | Size | Class
+----- | ------------------ | ---- | -----
+1.49  | Coffee and  Donuts | 4oz  | Drip
+2.99  | Moonbucks          | 6oz  | Latte
+4.29  | Stamptown          | 8oz  | Cold Brew
+-     | Blue Cup           | 12oz | -
+
+
+First, we will explore the preferences of one of the respondents (respondent 1), and then we will turn to analyze all 10 respondents.
+
+
+# Setting the data
+We first start by loading the packages. 
+
+```{r}
+rm(list=ls())
+library(ggplot2)
+library(ggthemes)
+library(knitr)
+library(broom)
+library(GA)
+set.seed(0)
+```
+
+Now we load the data from the file *example_fullData.csv* similarly as seen in the lecture. 
+
+```{r}
+cData <- read.csv("./example_fullData.csv", header=TRUE)
+cData$Price<-as.factor(cData$Price)
+kable(cData,caption = "Conjoint data for 10 respondents")
+xData <- cData[,-10:-1]
+Ratings <- cData[,1:10]
+```
+
+Notice that we transform the variable *Price* to a factor, otherwise *R* recognizes it as a integer.
+We also define a data frame containing only the responses. This way if we are interested in using the responses of, for example, respondent 3, we can write:
+```{r,eval=FALSE}
+Ratings[,3]
+```
+
+We attach the data to make it available to call without naming the data frame *cData*.
+
+```{r}
+attach(cData)
+```
+# Preferences for Respondent 1
+## Partworths and best/worst possible profiles
+
+We now regress the ratings of respondent 1 with the variables that contain the information of which attribute levels the profiles take for each attribute.
+
+
+```{r}
+fit <- lm(Ratings[,1]~ Price + Brand + Size + Class)
+summary(fit)
+```
+Using the partworths of respondent 1, we can say for example that he/she significantly prefers paying 1.49 (baseline level) over 4.29, but there are no differences between a price of 1.49 and 2.99. We can also say that he/she significantly prefers coffee from Stamptown over Blue Cup.
+
+We can also determine the best and worst possible coffee products for respondent 1:
+
+- **Best**: A 12 oz Stamptown Cold brew coffee, priced at \$2.99
+- **Worst**: A 4 oz Blue Cup Latte, priced at \$4.29
+
+## Attribute importance for Respondent 1
+
+We know use the function seen in the lecture to compute how important are each attribute for respondent 1
+
+```{r}
+get_importance <- function(xData, fit){
+  get_range<-function(attr, df, fit){
+    coeff <- c(0)
+    for(coef in names(fit$coefficients)){
+      if(grepl(attr, coef)){coeff <- c(coeff, as.numeric(fit$coefficients[coef]))}
+    }
+    
+    range <- max(coeff) - min(coeff)
+    return(range = range)
+  }
+  
+  
+  Ranges <- c()
+  for(attr in names(xData)){
+    range <- get_range(attr = attr,df = cData, fit = fit)
+    Ranges <- c(Ranges, range)
+  }
+  
+  imp <- round(100 * Ranges / sum(Ranges),2)
+  Res <- data.frame(names(xData), Ranges,  imp)
+  names(Res) <- c('Attribute', 'Range', 'Importance')
+  return(Res)
+}
+
+impTable <- get_importance(xData, fit)
+kable(impTable, caption = 'Attributes relative importance', align="lcc", digits=2)
+
+```
+
+The most important attribute for respondent 1 is Brand (45.40%), and the least important is Size (12.68%)
+
+## Predicting the utility for products
+
+We now analyze how would this respondent rate the products that are available in the market, as well as the potential products that "Coffee and Donuts" may introduce.
+
+We load the data, and transform the variable *Price* to a factor. This data looks like this:
+
+```{r}
+newData <- read.csv("./example_Products.csv", 
+                    header=TRUE)
+newData$Price <- as.factor(newData$Price)
+kable(newData,
+      caption = "Products in the market and potential new products")
+```
+
+We copy the data to a new data frame variable (the original we are using it later), and we use the fitted regression model stored in the object `fit` and we use the function `predict` giving it the `fit` object and the new data `newData_resp1` for which we want to compute the expected utility this respondent would get from those products. We finally store the prediction in a new variable `Expected_utility` in the same data frame `newData_resp1`.
+
+```{r}
+newData_resp1 <- newData
+newData_resp1$Expected_utility <- predict(fit, newData_resp1)
+kable(newData_resp1,caption = "Expected utility for product 1")
+```
+
+We can say that this respondent obtains the highest utility from the 6oz Stamptown Cold Brew Coffee priced at \$2.99 (~5.10). If he/she would have to choose from the three products available in the market, he/she would choose the first product (5.10>2.41 and 5.10>1.47). On the other hand if any of the three "Coffee and Donuts" products are introduced, then this respondent would still prefer the Stamptown coffee.
+
+# Using all respondents
+Now we turn to analyze all respondents. There are two outcomes that we are interested in.  
+
+The first is the attribute importance for all respondents. This allows us to more or less understand in aggregate what respondents care about in this product category.  
+
+The second one is the expected utility each respondents would give to each of the existing products in the market as well as the potential products that "Coffee and Donuts" may introduced. We need the expected utility for each respondent for one of these products in order to predict which product (among those) will give them the highest utility (and therefore which one they will choose). Using which product they will choose we can estimate market shares, assuming these respondents are representative of the whole market.  
+
+We first set the number of respondents `I`, and create a matrix to store the attribute importances of each respondent. 
+
+For the expected utilities we will add a column for each respondent to the data frame `newData` named `Exp_Ut_1` to `Exp_Ut_10`.
+
+We recursively regress the ratings of each respondent and store attribute importances and prediction of utility for the products in ``newData``.
+
+```{r}
+I <- ncol(Ratings)
+
+importances <- matrix(0,nrow = ncol(xData),ncol = I+1)
+rownames(importances) <- colnames(xData)
+colnames(importances) <- c(paste("Respondent",1:I,sep = "_"),"Average")
+
+for(i in 1:I){
+  fit <- lm(Ratings[,i]~ Price + Brand + Size + Class)
+  #print(summary(fit_list[[i]]))
+  importances[,i] <- get_importance(xData, fit)[,3]
+  newData <- cbind(newData,predict(fit, newData))
+  colnames(newData)[ncol(newData)] <- paste("Exp_Ut",i,sep = "_")
+}
+
+importances[,I+1] <- rowMeans(importances)
+
+kable(newData, 
+      caption = "Expected utility for all respondents for all products")
+
+kable(importances, 
+      caption = "Attribute importance for all respondents and average importance")
+
+```
+
+From the attribute importances table, we can see that in average the most important attributes for respondents are Price (27.50%) and Brand (26.43%), whereas the least important ones are Size (18.60%) and Class (18.37%).
+
+Now we can use the expected utilities of each respondent for all products to estimate market shares. We will estimate market shares in four scenarios.
+
+- **Current**: Only the products that are available in the market, this is, those for which the variable *Available* takes the value 1.
+- **Scenario 1**: "Coffee and Donuts" introduces their first product in the list (fourth product in the data). Thus, 4 products in the market: 3 existing ones plus the "Coffee and Donuts" 6oz Drip Coffee priced at \$1.49. 
+- **Scenario 2**: "Coffee and Donuts" introduces their second product in the list (fifth product in the data). Thus, 4 products in the market: 3 existing ones plus the "Coffee and Donuts" 12oz Latte Coffee priced at \$2.99. 
+- **Scenario 3**: "Coffee and Donuts" introduces their third product in the list (sixth product in the data). Thus, 4 products in the market: 3 existing ones plus the "Coffee and Donuts" 8oz Cold Brew Coffee priced at \$2.99. 
+
+```{r}
+Exp_ut <- newData[,6:15]
+
+newData$Scenario_1 <- newData$Available + (1:6==4)
+newData$Scenario_2 <- newData$Available + (1:6==5)
+newData$Scenario_3 <- newData$Available + (1:6==6)
+```
+
+Now we compute the individual choice. For each scenario, we compute the maximum utility each respondent obtains, this is, we compute the maximum utility among the relevant products for each column (by using the ``apply` function). We then copy that row in the same matrix dimmension as the utilites for all product and we ask which one of the product has utility equal to the maximum (and therefore is chosen). 
+
+We sum respondent choices (which are either 0 or 1) for each product across respondents, and we divide by the number of respondents to obtain the market share.
+
+We repeat this process for all scenarios.
+
+
+```{r}
+choice_available <- Exp_ut == matrix(apply(Exp_ut[which(newData$Available==1),],2,max),
+                                     nrow = 6,ncol = I,byrow = TRUE)
+newData$current_mkt_share<-rowSums(choice_available)/I
+```
+
+```{r}
+choice_1 <- Exp_ut == matrix(apply(Exp_ut[which(newData$Scenario_1==1),],2,max),
+                             nrow = 6,ncol = I,byrow = TRUE)
+newData$sce_1_mkt_share <- rowSums(choice_1)/I
+```
+
+```{r}
+choice_2 <- Exp_ut == matrix(apply(Exp_ut[which(newData$Scenario_2==1),],2,max),
+                             nrow = 6,ncol = I,byrow = TRUE)
+newData$sce_2_mkt_share <- rowSums(choice_2)/I
+```
+
+```{r}
+choice_3 <- Exp_ut == matrix(apply(Exp_ut[which(newData$Scenario_3==1),],2,max),
+                             nrow = 6,ncol = I,byrow = TRUE)
+newData$sce_3_mkt_share <- rowSums(choice_3)/I
+```
+
+Finally we show the market share each product would obtain in all scenarios:
+
+```{r}
+kable(newData[,-6:-15],
+      caption = "Market share for current, and all potential scenarios")
+```
+
+
+We can see that in the existing market we predict a 50% market share for the Stamptown coffee, 30% market share for the Moonbucks coffee and 20% for the Blue Cup.
+
+Also if "Coffee and Donuts" would launch:  
+
+- the \$1.49 6oz drip coffee, it would get 30% of the market; 
+- the \$2.99 12 oz latte coffee, it would get 40% of the market; 
+- the \$2.99 8oz cold brew coffee, it would get 20% of the market
+
+So if "Coffee and Donuts" would be interested in maximizing market share they would launch the \$2.99 12 oz latte coffee.
+
+# Product line optimization
+
+Now we want to find the set of products (at most 3) to introduce as a part of the product line that maximizes total profits. The set of feasible products is contained in the file *example_ProductLine.csv*, as well as the margins for each of these products.
+
+First we will create a data structure similar to the one from the lecture. In the lecture, we used a data frame of expected utilites where each row represents a customer and each column a different product. The first column, is the only column "status_quo", which represented the utility of the product that gives that customer the highest utility. Because we are not computing market shares for the competition, the only information we need is what is the highest utility the customer is getting so far.
+
+
+Thus, we first read the data, and save the margins as a different variable.
+
+```{r}
+plData <- read.csv("./example_ProductLine.csv", header=TRUE)
+plData$Price <- as.factor(plData$Price)
+margin <- plData$Margin
+kable(plData)
+```
+
+Then we compute the data frame of expected utilities. First, we compute the "status-quo" column. Then, we compute the utilities for the rest.
+
+```{r}
+status_quo <-apply(Exp_ut[which(newData$Available==1),],2,max)
+P <- nrow(plData)
+utils <- matrix(0, nrow = I, ncol = P+1)
+colnames(utils) <- c("status_quo",paste("Product",1:P,sep = "_"))
+rownames(utils) <- paste("Respondent",1:I,sep = "_")
+utils[,1] <- status_quo
+
+for(i in 1:I){
+  fit <- lm(Ratings[,i]~ Price + Brand + Size + Class)
+  #print(summary(fit_list[[i]]))
+  utils[i,2:(P+1)] <- predict(fit, plData)
+}
+kable(utils)
+```
+
+
+Now we write the profit and objective function exactly as seen in the lecture notes. 
+
+Given a product line that is available in the market, consumers are assumed to compare the offered products with the status-quo and purchase the product with the hightest utility. Thus each consumer buys a single product, either the status-quo, or one from the product line. 
+
+Because we are interested in finding the set of products with size at most 3, it means that we need to set the variable ``numProd`` to 3.
+
+```{r}
+profit<-function(offered, utils, margin){
+  
+  offered1<-c(1, offered)
+  
+  uOffered <- t(apply(utils, 1, function(x)(x * offered1)))
+  maxUtil <- apply(uOffered, 1, max)
+  
+  prodHighest<-matrix(0, nrow(utils), ncol(utils)-1)
+  
+  for(i in 1:nrow(utils)){
+    for(j in 2:ncol(utils)){
+      if(uOffered[i, j] == maxUtil[i]) {prodHighest[i,j-1]=1;break}
+    }
+  }
+  profitVec<-apply(prodHighest, 1, function(x){x %*% margin})
+  sum(profitVec)
+}
+
+obj<-function(offered, utils, margin, numProd){
+  
+  pr<-profit(offered, utils, margin)
+  penalty<-10*max(margin)*abs(sum(offered)-numProd)
+  
+  pr-penalty
+}
+
+```
+
+
+Finally we can use the GA package to perform the optimization. 
+
+```{r}
+set.seed(0)
+gaOpt<-ga("binary", fitness=obj, utils=utils, margin=margin, numProd=3, nBits=length(margin), maxiter=100)
+```
+
+```{r}
+summary(gaOpt)
+```
+```{r}
+sol <- gaOpt@solution
+sol
+print(paste("Number of solutions:",nrow(sol)))
+```
+
+Note that you could potentially have multiple solutions, this is, multiple combinations of three products that give you the same profits.
+
+This means, the products offered are 8, 12 and 19.
+
+```{r}
+kable(plData[which(c(sol[1,])==1),])
+```
+
+
+The following shows how the Genetic algorithm stochastically improves the objective function value over the iterations. 
+
+```{r}
+plot(gaOpt)
+```
+
+The following table shows the utilities that the 10 subjects derive from the status quo product and the products within the product line.
+
+```{r}
+t(apply(utils, 1, function(x)(x * c(1,sol[1,]))))
+
+```
+
+We can compute the optimal profit using the profit function that we specified above. Note that the profit function is distinct from the objective function, as the latter also contains the penalty term.
+
+```{r}
+profit(sol[1,], utils, margin)
+```

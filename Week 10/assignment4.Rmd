@@ -1,0 +1,130 @@
+---
+title: "Logistic Regression for Churn Modeling"
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+---
+In this notebook we model how customers churn (stop engaging with the firm) to figure out what determines the probability of customer 'exit'. We use logistic regression for this task. We also use the model of churn to calcuate expected profits based on a version of a customer lifetime value model. 
+
+# Definition
+
+Recall that to 'churn' means to stop a paying relationship with a firm. So, for example, if customer had a contract and did not renew it, he churned. Also note that if $c$ is probability of churn, then $p=1-c$ is the probability that customer will keep trasacting into the next period, that is, a retention rate or retention probability.
+
+# Data
+
+The exercise is based on Telco customer churn data provided by IBM, which is publically available here: https://www.ibm.com/communities/analytics/watson-analytics-blog/guide-to-sample-datasets/
+
+However, work with the file *telco_churn_data.csv* that has been provided to you on edx site, as it has been modified compared to the original. We begin by reading the data from the file *telco_churn_data.csv* in our working directory.
+
+```{r}
+options(scipen=999) # turn off scientific notation
+set.seed(999) # set seed
+data <- read.csv('telco_churn_data.csv', header=TRUE) # read data
+data <- within(data, Churn <- relevel(Churn, ref = 'No')) # making sure Churn == 'Yes' is coded as 1 and Churn == 'No' as zero, in binary logistic regression
+head(data,5) # take a look at the data
+```
+
+Each row in the data corresponds to a different customer. The dependent variable here is Churn (0/1) -- whether customer churned during last month, and we are trying to evaluate how different features in the data affect churn probability, including demographic information (whether the customer has a partner, is he a senior citizen) and other account information (contract type, paperless billing, monthly charges). Full variable list is as follows
+
+```{r}
+colnames(data)
+```
+
+# Logistic Regression
+
+We now perform a logistic regression to summarize the data, regressing the churn event (0/1) on all other variables.
+
+```{r}
+set.seed(999) # set seed
+model <- glm(Churn ~ .,  
+             data=data,  
+             family=binomial(link = "logit"))
+summary(model)
+```
+
+From these results we observe that, for example, increase in monthly charges is significantly positively correlated with increased probability of churn, whereas being on a contract rather than on month-to-month renewal significantly reduces churn probability.
+
+# Predictions
+
+We can now predict the probability of churn for the data set. 
+
+```{r}
+data$churn_prob <- predict.glm(model, newdata=data, type="response")
+hist(data$churn_prob)
+```
+```{r}
+library('caret') # may need to install this package first
+confusionMatrix(1*(data$churn_prob>0.5),1*(data$Churn=='Yes'))
+```
+
+# Targeting
+
+One thing we can do with this data is target individuals at high risk of churn in an email blast. This is how we would identify the individuals.
+
+```{r}
+sum(data$churn_prob>0.6) # number of customers with probability of churn strictly greater than 60%
+```
+
+# Monetary value of a contract
+
+Being on a 1-year contract significantly deters a person from churning, compared to month-to-month renewal schedule. Can we express this pressure not to churn in dollars? That is, how much extra would we need to charge a person on a 1-year contract to make him/her as likely to churn as a person on month-to-month renewal process?
+```{r}
+-model$coefficients[7]/model$coefficients[10]
+```
+We would need to charge that person extra $\$94.7$ per month. This amount gives us some idea about how much more valuable a customer on a contract is compared to a customer without a contract.
+
+# Increase in monthly charges and churn
+
+After some conversations with the CEO, you feel there is a space for price increase. You decide on an immediate one-time hike in monthly charges. You want it to be the same for every customer in percentage terms relative to their current monthly charge.
+
+In order to determine the profit-maximizing increase, you decide to perform analysis of future profits that incorporates effect of churn change due to increase in monthly charges. Note that in this type of analysis we require the critical assumptiont that the coefficient on the monthly charge is accurate for charge *changes*, rather than just charge *differences* between individuals. Assume that this is the case in this data set.
+
+We first make some simplifying assumptions. We assume that customers make a decision to churn or not at the end of each discrete period. We notice that each customer in the data set that has not churned will have to pay fees for the first month with probability 1. At the end of the period the cutomer will again decide whether to churn or not, based on the experienced fee. We also assume that upon a possible one-time change in monthly charges, all other customer and account characteristics will remain fixed for lifetime for the purposes of this analysis.
+
+Let $c$ be the probability that customer churns, so that $p = 1-c$ is the retention rate, i.e., the probability that customer will transact during subsequent period. Let $\gamma$ be a discount factor (by how much money tomorrow is worth less than money today; if $\gamma = 0.99$, then a dollar tomorrow is worth $\$0.99$ today). Let $m$ be customer's monthly charge at time $t$. Then the expected discounted profit from a customer (i.e., customer lifetime value, or CLV), based on formula for the sum of terms of a geometric progression https://en.wikipedia.org/wiki/Geometric_progression, is as follows
+
+$$CLV = m + \gamma(1-c) m + \gamma^2(1-c)^2 m + \cdots = m + \gamma p m + \gamma^2 p^2 m + \cdots = \frac{m}{1-\gamma p}$$
+(Note, slight variations are possible here in when we start discounting, and whether retention rate matters for the first payment, but we will go with this formula).
+
+Using this formula, we can calculate customer lifetime value -- expected discounted profit up to the infinite time horizon -- conditional on specific $m$ (monthly charge) and customer-specific probability of retention $p=1-c$, where we get churn probability $c$ as a prediction from the logistic regression. Notice that $p$ implicitly depends on $m$ through logistic equation (because $m$ is an input in the equation), and for $m$ fixed, we assume $p$ will remain constant throghout consumer lifetime.
+
+```{r}
+pf<-function(incr, data)
+{
+  d <- data[data$Churn=="No",] # only keeping customers that have not churned yet
+  d$MonthlyCharges <- d$MonthlyCharges*incr # possible increase in monthly charges (no increase is incr==1.0)
+  g <- 0.99 # discount factor (money in the next period is worth 0.99 money in the period before that)
+  p <- 1-predict.glm(model, newdata=d, type="response") # retention probability based on logistic regresion (we assume retention probability will remain constant for each consumer, conditional on fixed d$MonthlyCharges)
+  clv <- d$MonthlyCharges/(1-p*g) # CLV formula
+  return(sum(clv)) # sum of discounted profits across all individual consumers
+}
+```
+
+Let us compute this discounted profit across the dataset under different scenarios. 
+
+```{r}
+pf(1.0, data) # no increase in price: 1 * charge_amount
+pf(1.5, data) # 50% increase: (1 + 0.5) * charge_amount
+pf(2, data) # 100% increase / doubling: 2 * charge_amount
+pf(3, data) # 200% increase / trippling: 3 * charge_amount
+```
+# Discounted profit optimization
+
+Using the built-in optim function in R, we can directly optimize for discounted profit from this set of customers. We use a starting value of 1.0 (no change) for the optimal monthly charge increase, and store the optimization results in opt. 
+
+```{r}
+set.seed(999)
+opt<-optim(1.0, pf, method="L-BFGS-B", control=list(fnscale=-1), data=data)
+```
+
+The optimal increase in monthly charges and the optimal profit can be extracted from the optimization result as below.
+```{r}
+c(opt$par, opt$value)
+```
+We find that the optimal hike in monthly charges is $18.1\%=1.180934-1$ . 
+
+```{r}
+pf(opt$par, data) - pf(1.0, data)
+```
+We also see that the hike in charges yields extra $\$36752$ in customer lifetime value.

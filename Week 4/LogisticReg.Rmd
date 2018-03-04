@@ -1,0 +1,170 @@
+---
+title: "R Notebook: Binary choice modeling"
+output:
+  html_document: default
+  html_notebook: default
+header-includes: \usepackage{bbm}
+---
+
+## Packages
+
+Make sure the following packages are installed before proceeding:
+
+1. ggplot2
+2. ggthemes
+3. xtable 
+4. knitr
+5. caret
+6. e1071
+7. pROC
+
+```{r}
+library("xtable") # processing of regression output
+library("knitr") # used for report compilation and table display
+library("ggplot2") # very popular plotting library ggplot2
+library("ggthemes") # themes for ggplot2
+library("caret") # confusion matrix
+library("pROC") # confusion matrix
+```
+
+
+## Binary choice modeling
+
+This notebook shows how to estimate a simple binary choice model, interpret it, and use it to make predictions about consumer behavior. 
+
+## Reading data
+
+Let us load the data first.
+
+```{r}
+RFMdata <- read.csv(file = "RFMData.csv",row.names=1)
+kable(head(RFMdata,5),row.names = TRUE)
+```
+
+Each row (observation) is a separate customer who has transacted at least once before. The columns (variables) are:
+
+1. Recency – how many days since last
+purchase
+2. Frequency – how many times the consumer
+buys per year
+3. Monetary – total $ amount spent per year
+4. Purchase - (yes/no) whether purchase occurred 
+
+## Naive model
+
+Now, let us draw a scatter plot of purchase occurrences (y-axis) by recency (x-axis). We will also overlay on top a regression line through the cloud of points that is based on equation
+
+$$Purchase_i=\beta_0+\beta_1Recency_i$$
+We estimate parameters $\beta_0,\beta_1$ using ordinary least squares -- lm() function below. Then we plot everything using ggplot2 package, and use ggthemes to make the plot look nice.
+
+```{r }
+model <- lm(data=RFMdata, Purchase ~ Recency) # note, lm() automatically includes intercept
+
+# coef(model)[1] is beta0
+# coef(model)[2] is beta1
+
+p <- ggplot(RFMdata, aes(Recency, Purchase)) + 
+  geom_point(alpha=0.3) + # draws points
+  theme_bw() # changes visual theme of the plot to make the look cleaner
+
+p + geom_abline(intercept = coef(model)[1], # setting intercept of the line based on beta0
+                slope = coef(model)[2]) + # setting slope of the line based on beta1
+  # annotating
+  annotate(label = sprintf("y = %.5f + %.5f x\nR² = %.3f", coef(model)[1],coef(model)[2],  summary(model)$r.squared), geom = "text", x = 75, y = 0.6, size = 4)
+
+```
+
+What is naive about this model? For high values of recency (e.g., over 200), regression predicts values above 1, which is outside of the range of valid values.
+
+## A better choice model -- Logit
+
+A better model is logit, which restricts the output values to lie in $[0,1]$ interval.
+
+Specifically, it expresses probability of a purchase by customer $i$ as a function of coefficients $\beta_{0:3}$ and variables in the following manner:
+$$P(Purchase_i) = \frac{\exp(\beta_0 + \beta_1Recency_i + \beta_2Frequency_i+\beta_3Monetary_i)}{\exp(\beta_0 + \beta_1Recency_i + \beta_2Frequency_i+\beta_3Monetary_i) + 1}$$
+Intuitively, utility of *choosing to buy* is $$V_{bi} = \beta_0 + \beta_1Recency_i + \beta_2Frequency_i+\beta_3Monetary_i$$ whereas utility of *choosing **not** to buy* is normalized to zero $V_{ni}=0$, so $exp(V_{n})=exp(0)=1$ in the fraction above.
+
+With the given formulation, we can estimate values $\beta_{0:3}$ that fit data best. We use glm() of family="binomial".
+
+```{r echo=TRUE}
+model <- glm(Purchase~Recency+Frequency+Monetary, data=RFMdata, family = "binomial")
+output <- cbind(coef(summary(model))[, 1:4],exp(coef(model)))
+colnames(output) <- c("beta","SE","z val.","Pr(>|z|)",'exp(beta)')
+kable(output,caption = "Logistic regression estimates")
+```
+
+We also run the likelihood ratio test with $H_0:\beta_1=\beta_2=\beta_3=0$ -- to make sure our full logit model offers a significantly better fit than the model with just an intercept. We find that $\chi^2=107.14$ and $P(>|Chi|)\approx 0$, so we reject $H_0$.
+
+```{r echo=TRUE}
+# likelihood ratio test
+reduced.model <- glm(Purchase ~ 1, data=RFMdata, family = "binomial")
+kable(xtable(anova(reduced.model, model, test = "Chisq")),caption = "Likelihood ratio test")
+```
+
+## Predicting probabilities
+
+Now we calculate $P(Purchase_i)$ for each individual in the data set.
+```{r}
+# calculate logit probabilities
+RFMdata$Base.Probability <- predict(model, RFMdata, type="response")
+kable(head(RFMdata,5),row.names = TRUE)
+```
+
+## Predicting behavior
+
+We also calculate an indicator variable for whether individuals will purchase or not, based on their predicted probabilities $$\mathbb{1}[P(Purchase_i)\geq 0.5]$$ If individual's predicted probability is greater or equal to 0.5, we predict he will make a purchase. 
+```{r}
+# purchase vs. no purchase <-> p>0.5 or p<0.5
+RFMdata$Predicted.Purchase <- 1*(RFMdata$Base.Probability>=0.5)
+kable(head(RFMdata,5),row.names = TRUE)
+```
+
+## Evaluating the model
+
+Now we compute a *confusion matrix* between predicted purchases and actual purchase behavior.
+```{r}
+confusionMatrix(RFMdata$Predicted.Purchase,RFMdata$Purchase,positive = "1")
+```
+
+We can also plot the receiver operating characteristic (ROC) curve, which illustrates the diagnostic ability of a binary logit model. It is created by plotting the true positive rate (TPR) against the false positive rate (FPR) -- at various decision threshold values for prediction. 
+
+ROC curve can be quickly evaluated using area under the curve (AUC) metric, which captures the overall quality of the classifier. The greater the AUC, the better. AUC of 1.0 represents a perfect classifier, AUC of 0.5 (diagonal line) represents a worthless classifier. As we see, binary logit classifier does a good job predicting purchases on the training data.
+
+```{r}
+rocobj <- roc(RFMdata$Purchase, RFMdata$Base.Probability)
+{plot(rocobj,legacy.axes=TRUE)
+text(0.5, 0.8, labels = sprintf("AUC = %.5f",rocobj$auc))}
+```
+
+Finally, we predict new probabilities under a hypothetical scenario that everyone's *Monetary* variable went up by one unit $$V_{bi}^{new} = \beta_0 + \beta_1Recency_i + \beta_2Frequency_i+\beta_3(Monetary_i+1)$$ 
+
+```{r}
+# calculate new logit probabilities (Monetary+1)
+RFMdata_new <- RFMdata
+RFMdata_new$Monetary <- RFMdata_new$Monetary + 1
+RFMdata$New.Probability <- predict(model, RFMdata_new, type="response") 
+```
+
+We compare mean new probability across individuals to the mean of old probabilities, and also calculate the lift metric.
+
+$$p_{old}=\frac{1}{N}\sum_{i=1}^{N} P(Purchase_i) = \frac{1}{N}\sum_{i=1}^{N} \frac{\exp(V_{bi})}{\exp(V_{bi}) + 1}=\frac{1}{N}\sum_{i=1}^{N}\frac{\exp(\beta_0 + \beta_1Recency_i + \beta_2Frequency_i+\beta_3Monetary_i)}{\exp(\beta_0 + \beta_1Recency_i + \beta_2Frequency_i+\beta_3Monetary_i) + 1}$$
+$$p_{new}=\frac{1}{N}\sum_{i=1}^{N} P(Purchase_i^{new}) = \frac{1}{N}\sum_{i=1}^{N} \frac{\exp(V_{bi}^{new})}{\exp(V_{bi}^{new}) + 1}=\frac{1}{N}\sum_{i=1}^{N}\frac{\exp(\beta_0 + \beta_1Recency_i + \beta_2Frequency_i+\beta_3(Monetary_i+1))}{\exp(\beta_0 + \beta_1Recency_i + \beta_2Frequency_i+\beta_3(Monetary_i+1)) + 1}$$
+
+$$Lift = \frac{p_{new}-p_{old}}{p_{old}}$$
+```{r}
+# mean predicted base probability
+mean(RFMdata$Base.Probability)
+
+# mean new predicted probability
+mean(RFMdata$New.Probability)
+
+# lift
+(mean(RFMdata$New.Probability) - mean(RFMdata$Base.Probability))/mean(RFMdata$Base.Probability)
+
+# remove predicted purchase variable
+RFMdata$Predicted.Purchase <- NULL
+
+# data
+kable(head(RFMdata,5),row.names = TRUE)
+
+```

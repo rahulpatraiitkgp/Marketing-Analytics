@@ -1,0 +1,96 @@
+---
+title: "Ratings Based Conjoint"
+output:
+  html_notebook: default
+  html_document: default
+  pdf_document: default
+---
+```{r}
+library(ggplot2)
+library(ggthemes)
+library(broom)
+
+```
+
+
+```{r}
+cData <- read.csv("~/Dropbox (CBS)/teaching/MarketingAnalytics/conjoint/conjointData.csv", header=TRUE)
+xData<-cData[,-1]
+```
+
+```{r}
+attach(cData)
+```
+
+
+```{r}
+fit<-lm(Rating~ Career+Fitness+Humor+Religiosity+Interests)
+summary(fit)
+```
+```{r}
+str(Career)
+```
+
+
+```{r}
+
+pl<-function(attr, df, fit){
+  coeff <- c(0)
+  for(coef in names(fit$coefficients)){
+    if(grepl(attr, coef)){coeff <- c(coeff, as.numeric(fit$coefficients[coef]))}
+  }
+  
+  labels<-levels(df[[attr]])
+  
+  cframe<-data.frame(labels, coeff)
+  
+  g <- ggplot(data=cframe, aes(x=labels,y=coeff))+
+    geom_point()+
+    geom_line(aes(group=1), color="goldenrod1")+
+    theme_few()+
+    ylab("Coefficients")+
+    xlab(attr)
+  
+  show(g)
+}
+```
+
+```{r, fig.width = 4}
+for(attr in names(xData)){
+  pl(attr = attr, df = xData, fit = fit)
+}
+```
+```{r}
+get_importance <- function(xData, fit){
+  get_range<-function(attr, df, fit){
+    coeff <- c(0)
+    for(coef in names(fit$coefficients)){
+      if(grepl(attr, coef)){coeff <- c(coeff, as.numeric(fit$coefficients[coef]))}
+    }
+    
+    range <- max(coeff) - min(coeff)
+    return(range = range)
+  }
+  
+  
+  Ranges <- c()
+  for(attr in names(xData)){
+    range <- get_range(attr = attr,df = cData, fit = fit)
+    Ranges <- c(Ranges, range)
+  }
+  
+  imp <- round(100 * Ranges / sum(Ranges),2)
+  Res <- data.frame(names(xData), Ranges,  imp)
+  names(Res) <- c('Attribute', 'Range', 'Importance')
+  return(Res)
+}
+```
+
+```{r, fig.width= 4}
+library(knitr)
+impTable <- get_importance(xData, fit)
+kable(impTable, caption = 'Attributes relative importance', align="lcc", digits=2)
+g <- ggplot(data = impTable) + geom_bar(mapping = aes(x = Attribute, y = Importance),stat = 'identity', fill="goldenrod1", col = "goldenrod4") + theme_few()
+show(g)
+```
+
